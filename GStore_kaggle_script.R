@@ -85,7 +85,7 @@ train_data_subset[, num_cols] <- sapply(train_data_subset[, num_cols], as.numeri
 test_data_subset[, c('hits', 'pageviews', 'bounces', 'newVisits')] <- sapply(test_data_subset[, c('hits', 'pageviews', 'bounces', 'newVisits')], as.numeric)
 
 #Divide transactionRevenue by 1,000,000
-train_data_subset$transactionRevenue <- train_data_subset$transactionRevenue / 1e+06
+train_data_subset$transactionRevenue <- log1p(train_data_subset$transactionRevenue)
 
 #Missing Values
 data.table(
@@ -190,3 +190,5 @@ submit_df[is.na(submit_df$PredictedLogRevenue), "PredictedLogRevenue"] <- 0
 submit_df[submit_df$PredictedLogRevenue == -Inf, "PredictedLogRevenue"] <- 0
 
 write.csv(submit_df, file = "firstforest.csv", row.names = FALSE)
+
+nrow(test_data_subset[test_data_subset$fullVisitorId == '319401084506866864',])
