@@ -175,7 +175,7 @@ test <- dtrain[-train_ind,]
 fit <- randomForest(transactionRevenue ~ isMobile + hits + pageviews + newVisits + channelGrouping_encoded + browser_encoded, #+ operatingSystem_encoded + deviceCategory_encoded + continent_encoded + medium_encoded
                     data = train, 
                     importance = TRUE, 
-                    ntree = 10)
+                    ntree = 50)
 
 prediction <- predict(fit, dtest)
 
@@ -183,7 +183,7 @@ submit <- data.frame(fullVisitorId = test_data$fullVisitorId, PredictedLogRevenu
 
 submit_df <- data.frame(submit %>%
   group_by(fullVisitorId) %>%
-  summarise(PredictedLogRevenue=sum(log(PredictedLogRevenue))))
+  summarise(PredictedLogRevenue=sum(PredictedLogRevenue)))
 
 submit_df[is.na(submit_df$PredictedLogRevenue), "PredictedLogRevenue"] <- 0
 
