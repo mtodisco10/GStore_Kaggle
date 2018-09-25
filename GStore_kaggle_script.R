@@ -164,7 +164,7 @@ dtrain <- subset(train_data_subset, select = c(isMobile, hits, pageviews, newVis
 dtest <- subset(test_data_subset, select = c(isMobile, hits, pageviews, newVisits, channelGrouping_encoded, browser_encoded, operatingSystem_encoded, deviceCategory_encoded, continent_encoded, medium_encoded))
 
 #train test split
-smp_siz = floor(0.75*nrow(dtrain))
+smp_siz = floor(1*nrow(dtrain))
 set.seed(123)
 
 train_ind = sample(seq_len(nrow(dtrain)),size = smp_siz)
@@ -172,10 +172,10 @@ train_ind = sample(seq_len(nrow(dtrain)),size = smp_siz)
 train <- dtrain[train_ind,]
 test <- dtrain[-train_ind,]
 
-fit <- randomForest(transactionRevenue ~ isMobile + hits + pageviews + newVisits + channelGrouping_encoded + browser_encoded, #+ operatingSystem_encoded + deviceCategory_encoded + continent_encoded + medium_encoded
+fit <- randomForest(transactionRevenue ~ isMobile + hits + pageviews + newVisits + channelGrouping_encoded + browser_encoded + operatingSystem_encoded + deviceCategory_encoded + continent_encoded + medium_encoded,
                     data = train, 
                     importance = TRUE, 
-                    ntree = 50)
+                    ntree = 25)
 
 prediction <- predict(fit, dtest)
 
@@ -189,6 +189,4 @@ submit_df[is.na(submit_df$PredictedLogRevenue), "PredictedLogRevenue"] <- 0
 
 submit_df[submit_df$PredictedLogRevenue == -Inf, "PredictedLogRevenue"] <- 0
 
-write.csv(submit_df, file = "firstforest.csv", row.names = FALSE)
-
-nrow(test_data_subset[test_data_subset$fullVisitorId == '319401084506866864',])
+write.csv(submit_df, file = "3rdforest.csv", row.names = FALSE)
