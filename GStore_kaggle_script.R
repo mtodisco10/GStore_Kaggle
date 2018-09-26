@@ -26,7 +26,25 @@ test_data <- read.csv('dataFiles/test.csv', stringsAsFactors = FALSE, colClasses
 train_data <- read.csv('dataFiles/train.csv', stringsAsFactors = FALSE, colClasses = classes)
 sample_submission <- read.csv('dataFiles/sample_submission.csv', stringsAsFactors = FALSE, colClasses = c('character','character'))
 
+time_diff_df <- train_data[train_data$fullVisitorId == '1957458976293878100',]
+time_diff_df <- time_diff_df[order(time_diff_df$visitStartTime), ]
 
+time_df <- data.frame(sessionId = character(),
+                            secs_since_last_visit = integer())
+
+time_diff_df <- data.table(time_diff_df)
+time_diff_df[, time_diff := as.numeric(visitStartTime - shift(visitStartTime), units = 'secs')]
+View(time_diff_df)
+
+for (i in seq(1, (nrow(time_diff_df) - 1))) {
+  visit_diff_df <- data.frame(sessionId = time_diff_df$session[i],
+                   since_last_visit = as.numeric(time_diff_df$visitStartTime[i+1] - time_diff_df$visitStartTime[i], units ='secs'))
+  time_df <- rbind(time_diff_df, time_df)
+}
+
+View(merge(time_diff_df, time_df, all.x = TRUE))
+
+as.numeric(time_diff_df$visitStartTime[i+1] - time_diff_df$visitStartTime[i], units ='secs')
 # convert date column from character to Date class
 train_data$date <- as.Date(as.character(train_data$date), format='%Y%m%d')
 test_data$date <- as.Date(as.character(test_data$date), format='%Y%m%d')
