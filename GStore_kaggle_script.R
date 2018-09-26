@@ -26,25 +26,6 @@ test_data <- read.csv('dataFiles/test.csv', stringsAsFactors = FALSE, colClasses
 train_data <- read.csv('dataFiles/train.csv', stringsAsFactors = FALSE, colClasses = classes)
 sample_submission <- read.csv('dataFiles/sample_submission.csv', stringsAsFactors = FALSE, colClasses = c('character','character'))
 
-time_diff_df <- train_data[train_data$fullVisitorId == '1957458976293878100',]
-time_diff_df <- time_diff_df[order(time_diff_df$visitStartTime), ]
-
-time_df <- data.frame(sessionId = character(),
-                            secs_since_last_visit = integer())
-
-time_diff_df <- data.table(time_diff_df)
-time_diff_df[, time_diff := as.numeric(visitStartTime - shift(visitStartTime), units = 'secs')]
-View(time_diff_df)
-
-for (i in seq(1, (nrow(time_diff_df) - 1))) {
-  visit_diff_df <- data.frame(sessionId = time_diff_df$session[i],
-                   since_last_visit = as.numeric(time_diff_df$visitStartTime[i+1] - time_diff_df$visitStartTime[i], units ='secs'))
-  time_df <- rbind(time_diff_df, time_df)
-}
-
-View(merge(time_diff_df, time_df, all.x = TRUE))
-
-as.numeric(time_diff_df$visitStartTime[i+1] - time_diff_df$visitStartTime[i], units ='secs')
 # convert date column from character to Date class
 train_data$date <- as.Date(as.character(train_data$date), format='%Y%m%d')
 test_data$date <- as.Date(as.character(test_data$date), format='%Y%m%d')
@@ -52,8 +33,24 @@ test_data$date <- as.Date(as.character(test_data$date), format='%Y%m%d')
 # convert visitStartTime to POSIXct
 train_data$visitStartTime <- as_datetime(train_data$visitStartTime)
 test_data$visitStartTime <- as_datetime(test_data$visitStartTime)
-  
+
+#Function to create a variable for time since last session
+time_since_last_session <- function(df, time_unit='secs'){
+  time_since_df <- df %>%
+    select(fullVisitorId, sessionId, visitStartTime) %>%
+    group_by(fullVisitorId) %>%
+    arrange(visitStartTime) %>%
+    mutate(time_diff = as.numeric(visitStartTime - lag(visitStartTime), units = time_unit))
+  time_since_df[is.na(time_since_df$time_diff), "time_diff"] <- 0
+  df <- merge(df, time_since_df[, c('sessionId','time_diff')], by='sessionId', all.x=TRUE)
+}
+
+train_data <- time_since_last_session(train_data, 'secs')
+test_data <- time_since_last_session(test_data, 'secs')
+
 #Parsing and flattening the json fields
+parse_and_flatten <- function(df, )
+
 device_train_df <- paste("[", paste(train_data$device, collapse = ","), "]") %>% fromJSON(flatten = T)
 geo_network_train_df <- paste("[", paste(train_data$geoNetwork, collapse = ","), "]") %>% fromJSON(flatten = T)
 totals_train_df <- paste("[", paste(train_data$totals, collapse = ","), "]") %>% fromJSON(flatten = T)
