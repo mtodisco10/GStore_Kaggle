@@ -232,16 +232,30 @@ params <- list(iterations=400,
 
 model <- catboost.train(dtrain_pool, dval_pool, params)
 
+feature_imp <- catboost.get_feature_importance(model, 
+                                pool = NULL, 
+                                fstr_type = "FeatureImportance")
+
+feature_mat <- cbind(matrix(names(X_train)), feature_imp)
+feature_mat[order(desc(feature_mat[,2])),]
+
+class(X_train$bounces)
+
+ggplot(dtrain_subset, aes(x=bounces, y=transactionRevenue)) + geom_point()
+
 dtest_pool = catboost.load_pool(data = dtest_subset)
 
 preds <- catboost.predict(model, dtest_pool)
 #mean((y_test - preds)^2)
 preds <- sapply(preds, function(x){ifelse(x < 0, 0, x)})
-head(preds)
-submit_catboost <- data.frame(fullVisitorId = test_data$fullVisitorId, PredictedLogRevenue = preds)
+
+dtest_subset$preds <- ifelse(dtest_subset$bounces == 1, 0, dtest_subset$preds)
+
+submit_catboost <- data.frame(fullVisitorId = test_data$fullVisitorId, PredictedLogRevenue = dtest_subset$preds)
 
 submit_catboost <- data.frame(submit_catboost %>%
                               group_by(fullVisitorId) %>%
                               summarise(PredictedLogRevenue=sum(PredictedLogRevenue)))
 
-write.csv(submit_catboost, file = "catboost1.csv", row.names = FALSE)
+write.csv(submit_catboost, file = "catboost3.csv", row.names = FALSE)
+
