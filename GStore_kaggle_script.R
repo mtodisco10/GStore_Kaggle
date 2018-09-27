@@ -105,8 +105,8 @@ train_data_subset <- remove_single_val_cols(train_data_subset)
 test_data_subset <- remove_single_val_cols(test_data_subset)
 
 #add bounces & newVisits back in
-train_data_subset <- cbind(train_data, subset(train_data, select = c(bounces, newVisits)))
-test_data_subset <- cbind(test_data, subset(test_data, select = c(bounces, newVisits)))
+train_data_subset <- cbind(train_data_subset, subset(train_data, select = c(bounces, newVisits)))
+test_data_subset <- cbind(test_data_subset, subset(test_data, select = c(bounces, newVisits)))
 
 # character columns to convert to numeric
 num_cols <- c('hits', 'pageviews', 'bounces', 'newVisits',
@@ -160,6 +160,7 @@ test_data_encoded[na_cols][is.na(test_data_encoded[na_cols])] <- 0
 train_data_encoded['transactionRevenue'][is.na(train_data_encoded['transactionRevenue'])] <- 0
 
 #Drop visitStartTime column
+drop_cols <- c('device','geoNetwork','socialEngagementType','')
 train_data_encoded$visitStartTime <- NULL
 test_data_encoded$visitStartTime <- NULL
 
@@ -173,7 +174,7 @@ dtest_subset <- subset(dtest_subset, select = -c(fullVisitorId, sessionId, visit
 
 #train test split
 set.seed(123)
-smp_siz = floor(.75*nrow(dtrain_subset))
+smp_siz = floor(.8*nrow(dtrain_subset))
 
 ind = sample(seq_len(nrow(dtrain_subset)),size = smp_siz)
 
@@ -184,7 +185,6 @@ X_test$transactionRevenue <- NULL
 
 y_train <- dtrain_subset[ind, ]$transactionRevenue
 y_test <- dtrain_subset[-ind, ]$transactionRevenue
-
 
 #X_test_scaled = scale(dtest, center=attr(X_train_scaled, "scaled:center"), 
 #                      scale=attr(X_train_scaled, "scaled:scale"))
@@ -215,11 +215,11 @@ y_test <- dtrain_subset[-ind, ]$transactionRevenue
 
 library(catboost)
 
-dtrain_pool <- catboost.load_pool(data = X_train, label =  log1p(y[train_ind]))
+dtrain_pool <- catboost.load_pool(data = X_train, label = y_train)
 
-dval_pool <- catboost.load_pool(data = X_train_scaled[!train_ind, ], label = log1p(y[!train_ind]))
+dval_pool <- catboost.load_pool(data = X_test, label = y_test)
 
-params <- list(iterations=1000,
+params <- list(iterations=400,
                learning_rate=0.05,
                depth=10,
                loss_function='RMSE',
@@ -232,12 +232,12 @@ params <- list(iterations=1000,
 
 model <- catboost.train(dtrain_pool, dval_pool, params)
 
-dtest_scaled = scale(dtest, center=attr(X_train_scaled, "scaled:center"), 
-                      scale=attr(X_train_scaled, "scaled:scale"))
+dtest_pool = catboost.load_pool(data = dtest_subset)
 
-dtest_scaled = catboost.load_pool(data = dtest_scaled)
-preds <- catboost.predict(model, dtest_scaled)
-
+preds <- catboost.predict(model, dtest_pool)
+#mean((y_test - preds)^2)
+preds <- sapply(preds, function(x){ifelse(x < 0, 0, x)})
+head(preds)
 submit_catboost <- data.frame(fullVisitorId = test_data$fullVisitorId, PredictedLogRevenue = preds)
 
 submit_catboost <- data.frame(submit_catboost %>%
