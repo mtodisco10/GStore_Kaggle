@@ -33,11 +33,11 @@ test_data$date <- as.Date(as.character(test_data$date), format='%Y%m%d')
 #Date Features
 train_data$month_num <- month(train_data$date)
 train_data$week_num <- wday(train_data$date)
-train_data$day_num <- days(train_data$date)
+train_data$day_num <- as.numeric(days(train_data$date))
 
 test_data$month_num <- month(test_data$date)
 test_data$week_num <- wday(test_data$date)
-test_data$day_num <- days(test_data$date)
+test_data$day_num <- as.numeric(days(test_data$date))
 
 train_data$date <- NULL
 test_data$date <- NULL
@@ -49,6 +49,10 @@ test_data$visitStartTime <- as_datetime(test_data$visitStartTime)
 #Get hour of visit
 train_data$hour_num <- hour(train_data$visitStartTime)
 test_data$hour_num <- hour(test_data$visitStartTime)
+
+#Combine Hour & Month to get new feature
+train_data$hour_month <- (train_data$hour_num * train_data$month_num) / 10
+test_data$hour_month <- (test_data$hour_num * test_data$month_num) / 10
 
 #Function to create a variable for time since last session
 time_since_last_session <- function(df, time_unit='secs'){
@@ -78,7 +82,7 @@ json_cols = c('device', 'geoNetwork', 'totals', 'trafficSource')
 
 train_data <- parse_json(train_data, json_cols)
 test_data <- parse_json(test_data, json_cols)
-
+  
 #Drop old json columns
 train_data_subset <- subset(train_data, select = -c(device, geoNetwork, totals, trafficSource))
 test_data_subset <- subset(test_data, select = -c(device, geoNetwork, totals, trafficSource))
@@ -95,6 +99,27 @@ na_vals <- c('unknown.unknown','(not set)','not available in demo dataset','(not
 set_na_values(train_data_subset, na_vals)
 set_na_values(test_data_subset, na_vals)
 
+#Ad Content Feature Flags
+train_data_subset$adContent_flag <- ifelse(is.na(train_data_subset$adContent), 1, 0)
+test_data_subset$adContent_flag <- ifelse(is.na(test_data_subset$adContent), 1, 0)
+
+train_data_subset$adwords_flag <- ifelse(is.na(train_data_subset$adwordsClickInfo.page), 1, 0)
+test_data_subset$adwords_flag <- ifelse(is.na(test_data_subset$adwordsClickInfo.page), 1, 0)
+
+#Metro Feature Flag
+train_data_subset$metro_flag <- ifelse(is.na(train_data_subset$metro), 1, 0)
+test_data_subset$metro_flag <- ifelse(is.na(test_data_subset$metro), 1, 0)
+
+#Network Domain Feature Flag
+train_data_subset$networkDomain_flag <- ifelse(is.na(train_data_subset$networkDomain), 1, 0)
+test_data_subset$networkDomain_flag <- ifelse(is.na(test_data_subset$networkDomain), 1, 0)
+
+#columns to fill na w/ 0
+na_cols <- c('bounces','newVisits','isTrueDirect')
+train_data_subset[na_cols][is.na(train_data_subset[na_cols])] <- 0
+train_data_subset['transactionRevenue'][is.na(train_data_subset['transactionRevenue'])] <- 0
+test_data_subset[na_cols][is.na(test_data_subset[na_cols])] <- 0
+
 #Remove columns with only a single value or less
 remove_single_val_cols <- function(df){
   unique_col_vals <- sapply(df, function(x){length(unique(x[!is.na(x)]))})
@@ -104,13 +129,9 @@ remove_single_val_cols <- function(df){
 train_data_subset <- remove_single_val_cols(train_data_subset)
 test_data_subset <- remove_single_val_cols(test_data_subset)
 
-#add bounces & newVisits back in
-train_data_subset <- cbind(train_data_subset, subset(train_data, select = c(bounces, newVisits)))
-test_data_subset <- cbind(test_data_subset, subset(test_data, select = c(bounces, newVisits)))
-
 # character columns to convert to numeric
 num_cols <- c('hits', 'pageviews', 'bounces', 'newVisits',
-              'transactionRevenue')
+              'transactionRevenue','isMobile')
 
 # change columns to numeric
 train_data_subset[, num_cols] <- sapply(train_data_subset[, num_cols], as.numeric)
@@ -156,9 +177,6 @@ na_cols <- c('pageviews','newVisits','bounces','continent_encoded','source_encod
 train_data_encoded[na_cols][is.na(train_data_encoded[na_cols])] <- 0
 test_data_encoded[na_cols][is.na(test_data_encoded[na_cols])] <- 0
 
-#Fill in transactionRevenue NA's
-train_data_encoded['transactionRevenue'][is.na(train_data_encoded['transactionRevenue'])] <- 0
-
 #Drop visitStartTime column
 drop_cols <- c('device','geoNetwork','socialEngagementType','')
 train_data_encoded$visitStartTime <- NULL
@@ -174,7 +192,9 @@ dtest_subset <- subset(dtest_subset, select = -c(fullVisitorId, sessionId, visit
 
 #train test split
 set.seed(123)
-smp_siz = floor(.8*nrow(dtrain_subset))
+dtrain_subset <- subset(dtrain_subset[dtrain_subset$bounces==0, ], select=-c(bounces))
+dtest_subset <- subset(dtest_subset, select=-c(bounces))
+smp_siz = floor(.75*nrow(dtrain_subset))
 
 ind = sample(seq_len(nrow(dtrain_subset)),size = smp_siz)
 
@@ -183,35 +203,21 @@ X_train$transactionRevenue <- NULL
 X_test <- dtrain_subset[-ind, ]
 X_test$transactionRevenue <- NULL
 
+#Scaling
+X_train <- scale(X_train)
+X_test <- scale(X_test)
+dtest_subset <- scale(dtest_subset)
+
 y_train <- dtrain_subset[ind, ]$transactionRevenue
 y_test <- dtrain_subset[-ind, ]$transactionRevenue
+
+# 
+# y_train <- dtrain_subset[ind, ]$transactionRevenue
+# y_test <- dtrain_subset[-ind, ]$transactionRevenue
 
 #X_test_scaled = scale(dtest, center=attr(X_train_scaled, "scaled:center"), 
 #                      scale=attr(X_train_scaled, "scaled:scale"))
 
-# fit <- randomForest(y_train ~ .,
-#                     data = X_train, 
-#                     importance = TRUE, 
-#                     ntree = 10)
-# 
-# prediction <- predict(fit, dtest_subset)
-
-#length(sort(prediction))
-#length(y_test)
-#mean((y_test - prediction)^2)
-
-# data.frame(actual= y_test, prediction = prediction)
-# submit <- data.frame(fullVisitorId = test_data$fullVisitorId, PredictedLogRevenue = prediction)
-# 
-# submit_df <- data.frame(submit %>%
-#   group_by(fullVisitorId) %>%
-#   summarise(PredictedLogRevenue=sum(PredictedLogRevenue)))
-# 
-# submit_df[is.na(submit_df$PredictedLogRevenue), "PredictedLogRevenue"] <- 0
-# 
-# submit_df[submit_df$PredictedLogRevenue == -Inf, "PredictedLogRevenue"] <- 0
-# 
-# write.csv(submit_df, file = "7thforest.csv", row.names = FALSE)
 
 library(catboost)
 
@@ -219,8 +225,8 @@ dtrain_pool <- catboost.load_pool(data = X_train, label = y_train)
 
 dval_pool <- catboost.load_pool(data = X_test, label = y_test)
 
-params <- list(iterations=400,
-               learning_rate=0.05,
+params <- list(iterations=3000,
+               learning_rate=0.02,
                depth=10,
                loss_function='RMSE',
                eval_metric='RMSE',
@@ -230,32 +236,36 @@ params <- list(iterations=400,
                od_wait=100,
                use_best_model=TRUE)
 
-model <- catboost.train(dtrain_pool, dval_pool, params)
+model <- catboost.train(dtrain_pool, 
+                        dval_pool, 
+                        params)
 
 feature_imp <- catboost.get_feature_importance(model, 
                                 pool = NULL, 
                                 fstr_type = "FeatureImportance")
 
-feature_mat <- cbind(matrix(names(X_train)), feature_imp)
-feature_mat[order(desc(feature_mat[,2])),]
+feature_mat <- data.frame(cbind(data.frame(names(X_train)), data.frame(feature_imp)))
+feature_mat[order(desc(feature_mat$feature_imp)),  ]
 
-class(X_train$bounces)
-
-ggplot(dtrain_subset, aes(x=bounces, y=transactionRevenue)) + geom_point()
+#ggplot(dtrain_subset, aes(x=bounces, y=transactionRevenue)) + geom_point()
 
 dtest_pool = catboost.load_pool(data = dtest_subset)
 
 preds <- catboost.predict(model, dtest_pool)
+
 #mean((y_test - preds)^2)
-preds <- sapply(preds, function(x){ifelse(x < 0, 0, x)})
+
+dtest_subset$preds <- sapply(preds, function(x){ifelse(x < 0, 0, x)})
+dtest_subset$bounces <- as.numeric(test_data$bounces)
+dtest_subset['bounces'][is.na(dtest_subset['bounces'])] <- 0
 
 dtest_subset$preds <- ifelse(dtest_subset$bounces == 1, 0, dtest_subset$preds)
 
 submit_catboost <- data.frame(fullVisitorId = test_data$fullVisitorId, PredictedLogRevenue = dtest_subset$preds)
-
+head(dtest_subset)
 submit_catboost <- data.frame(submit_catboost %>%
                               group_by(fullVisitorId) %>%
                               summarise(PredictedLogRevenue=sum(PredictedLogRevenue)))
-
-write.csv(submit_catboost, file = "catboost3.csv", row.names = FALSE)
-
+View(head(submit_catboost,10))
+write.csv(submit_catboost, file = "catboost8.csv", row.names = FALSE)
+head(submit_catboost)
