@@ -20,6 +20,7 @@ library(randomForest)
 library(xgboost)
 library(chron)
 
+
 #Read in the Data
 classes <- c('character','integer','character','character','character','character','character','character','character','integer','integer','integer')
 test_data <- read.csv('dataFiles/test.csv', stringsAsFactors = FALSE, colClasses = classes)
@@ -114,8 +115,12 @@ test_data_subset$metro_flag <- ifelse(is.na(test_data_subset$metro), 1, 0)
 train_data_subset$networkDomain_flag <- ifelse(is.na(train_data_subset$networkDomain), 1, 0)
 test_data_subset$networkDomain_flag <- ifelse(is.na(test_data_subset$networkDomain), 1, 0)
 
+#isVideoAd
+train_data_subset$isVideoAd = ifelse(!train_data_subset$adwordsClickInfo.isVideoAd, 1L, 0L)
+test_data_subset$isVideoAd = ifelse(!test_data_subset$adwordsClickInfo.isVideoAd, 1L, 0L)
+
 #columns to fill na w/ 0
-na_cols <- c('bounces','newVisits','isTrueDirect')
+na_cols <- c('bounces','newVisits','isTrueDirect','isVideoAd')
 train_data_subset[na_cols][is.na(train_data_subset[na_cols])] <- 0
 train_data_subset['transactionRevenue'][is.na(train_data_subset['transactionRevenue'])] <- 0
 test_data_subset[na_cols][is.na(test_data_subset[na_cols])] <- 0
@@ -130,12 +135,12 @@ train_data_subset <- remove_single_val_cols(train_data_subset)
 test_data_subset <- remove_single_val_cols(test_data_subset)
 
 # character columns to convert to numeric
-num_cols <- c('hits', 'pageviews', 'bounces', 'newVisits',
+num_cols <- c('hits', 'pageviews', 'newVisits',
               'transactionRevenue','isMobile')
 
 # change columns to numeric
 train_data_subset[, num_cols] <- sapply(train_data_subset[, num_cols], as.numeric)
-test_data_subset[, c('hits', 'pageviews', 'bounces', 'newVisits')] <- sapply(test_data_subset[, c('hits', 'pageviews', 'bounces', 'newVisits')], as.numeric)
+test_data_subset[, c('hits', 'pageviews', 'newVisits')] <- sapply(test_data_subset[, c('hits', 'pageviews', 'newVisits')], as.numeric)
 
 #Take log of the target variable
 train_data_subset$transactionRevenue <- log1p(train_data_subset$transactionRevenue)
@@ -192,9 +197,9 @@ dtest_subset <- subset(dtest_subset, select = -c(fullVisitorId, sessionId, visit
 
 #train test split
 set.seed(123)
-dtrain_subset <- subset(dtrain_subset[dtrain_subset$bounces==0, ], select=-c(bounces))
+dtrain_subset <- subset(dtrain_subset, select=-c(bounces))
 dtest_subset <- subset(dtest_subset, select=-c(bounces))
-smp_siz = floor(.75*nrow(dtrain_subset))
+smp_siz = floor(.7*nrow(dtrain_subset))
 
 ind = sample(seq_len(nrow(dtrain_subset)),size = smp_siz)
 
@@ -204,9 +209,10 @@ X_test <- dtrain_subset[-ind, ]
 X_test$transactionRevenue <- NULL
 
 #Scaling
-X_train <- scale(X_train)
-X_test <- scale(X_test)
-dtest_subset <- scale(dtest_subset)
+X_train_scaled <- X_train
+X_test_scaled <- X_test
+dtest_subset_scaled <- dtest_subset
+#dtest_subset_scaled$bounces <- as.numeric(dtest_subset_scaled$bounces)
 
 y_train <- dtrain_subset[ind, ]$transactionRevenue
 y_test <- dtrain_subset[-ind, ]$transactionRevenue
@@ -221,11 +227,11 @@ y_test <- dtrain_subset[-ind, ]$transactionRevenue
 
 library(catboost)
 
-dtrain_pool <- catboost.load_pool(data = X_train, label = y_train)
+dtrain_pool <- catboost.load_pool(data = X_train_scaled, label = y_train)
 
-dval_pool <- catboost.load_pool(data = X_test, label = y_test)
+dval_pool <- catboost.load_pool(data = X_test_scaled, label = y_test)
 
-params <- list(iterations=3000,
+params <- list(iterations=1350,
                learning_rate=0.02,
                depth=10,
                loss_function='RMSE',
@@ -249,23 +255,34 @@ feature_mat[order(desc(feature_mat$feature_imp)),  ]
 
 #ggplot(dtrain_subset, aes(x=bounces, y=transactionRevenue)) + geom_point()
 
-dtest_pool = catboost.load_pool(data = dtest_subset)
+dtest_pool = catboost.load_pool(data = X_test)
 
 preds <- catboost.predict(model, dtest_pool)
 
-#mean((y_test - preds)^2)
+preds <- sapply(preds, function(x){ifelse(x < 1, 0, x)})
+#dtest_subset$bounces <- test_data$bounces
+#dtest_subset['bounces'][is.na(dtest_subset['bounces'])] <- 0
+preds <- preds * 2
+mean((y_test - preds)^2)
 
-dtest_subset$preds <- sapply(preds, function(x){ifelse(x < 0, 0, x)})
-dtest_subset$bounces <- as.numeric(test_data$bounces)
-dtest_subset['bounces'][is.na(dtest_subset['bounces'])] <- 0
+View(head(data.frame(X_test, y_test, preds), 1000))
 
-dtest_subset$preds <- ifelse(dtest_subset$bounces == 1, 0, dtest_subset$preds)
+#dtest_subset$preds <- ifelse(dtest_subset$bounces == 1, 0, dtest_subset$preds)
 
 submit_catboost <- data.frame(fullVisitorId = test_data$fullVisitorId, PredictedLogRevenue = dtest_subset$preds)
-head(dtest_subset)
+
 submit_catboost <- data.frame(submit_catboost %>%
                               group_by(fullVisitorId) %>%
                               summarise(PredictedLogRevenue=sum(PredictedLogRevenue)))
-View(head(submit_catboost,10))
-write.csv(submit_catboost, file = "catboost8.csv", row.names = FALSE)
-head(submit_catboost)
+
+View(head(submit_catboost, 10))
+write.csv(submit_catboost, file = "catboost9.csv", row.names = FALSE)
+
+#bstDense <- xgboost(data = as.matrix(train$data), label = train$label, max.depth = 2, eta = 1, nthread = 2, nrounds = 2, objective = "binary:logistic")
+
+xgb_model <- xgboost(data=as.matrix(X_train), label=y_train, max.depth = 2, eta = 2, nthread=2, nrounds = 100, objective = 'reg:linear', eval_metric = 'rmse', silent = 0)
+
+pred <- predict(xgb_model, as.matrix(dtest_subset))
+
+log1p(pred)
+log10(pred)
