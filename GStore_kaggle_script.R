@@ -27,33 +27,52 @@ test_data <- read.csv('dataFiles/test.csv', stringsAsFactors = FALSE, colClasses
 train_data <- read.csv('dataFiles/train.csv', stringsAsFactors = FALSE, colClasses = classes)
 sample_submission <- read.csv('dataFiles/sample_submission.csv', stringsAsFactors = FALSE, colClasses = c('character','character'))
 
+#Parsing and flattening the json fields
+parse_json <- function(df, col_lst){
+  parsed_df <- df
+  for (col in col_lst){
+    flat_fields <- paste("[", paste(df[, col], collapse = ","), "]") %>% fromJSON(flatten = T)
+    parsed_df <- cbind(parsed_df, flat_fields)
+  }
+  return(parsed_df)
+}
+
+json_cols = c('device', 'geoNetwork', 'totals', 'trafficSource')
+
+parsed_train <- parse_json(train_data, json_cols)
+parsed_test <- parse_json(test_data, json_cols)
+
+#Drop old json columns
+parsed_train_subset <- subset(parsed_train, select = -c(device, geoNetwork, totals, trafficSource))
+parsed_test_subset <- subset(parsed_test, select = -c(device, geoNetwork, totals, trafficSource))
+
+#Drop campaignCode & transactionRevenue from training data
+parsed_train_subset$campaignCode <- NULL
+parsed_train_subset$transactionRevenue <- NULL
+
+#Reordering test data columns to match the order of the train data columns
+parsed_test_subset <- subset(parsed_test_subset, select = names(parsed_train_subset)) 
+
+#Combining train & test data
+tr_te <- rbind(parsed_train_subset, parsed_test_subset)
+
 # convert date column from character to Date class
-train_data$date <- as.Date(as.character(train_data$date), format='%Y%m%d')
-test_data$date <- as.Date(as.character(test_data$date), format='%Y%m%d')
+tr_te$date <- as.Date(as.character(tr_te$date), format='%Y%m%d')
 
 #Date Features
-train_data$month_num <- month(train_data$date)
-train_data$week_num <- wday(train_data$date)
-train_data$day_num <- as.numeric(days(train_data$date))
-
-test_data$month_num <- month(test_data$date)
-test_data$week_num <- wday(test_data$date)
-test_data$day_num <- as.numeric(days(test_data$date))
-
-train_data$date <- NULL
-test_data$date <- NULL
+tr_te$month_num <- month(tr_te$date)
+tr_te$week_num <- wday(tr_te$date)
+tr_te$day_num <- as.numeric(days(tr_te$date))
+tr_te$date <- NULL
 
 # convert visitStartTime to POSIXct
-train_data$visitStartTime <- as_datetime(train_data$visitStartTime)
-test_data$visitStartTime <- as_datetime(test_data$visitStartTime)
+tr_te$visitStartTime <- as_datetime(tr_te$visitStartTime)
 
 #Get hour of visit
-train_data$hour_num <- hour(train_data$visitStartTime)
-test_data$hour_num <- hour(test_data$visitStartTime)
+tr_te$hour_num <- hour(tr_te$visitStartTime)
 
 #Combine Hour & Month to get new feature
-train_data$hour_month <- (train_data$hour_num * train_data$month_num) / 10
-test_data$hour_month <- (test_data$hour_num * test_data$month_num) / 10
+tr_te$hour_month <- (tr_te$hour_num * tr_te$month_num) / 10
 
 #Function to create a variable for time since last session
 time_since_last_session <- function(df, time_unit='secs'){
@@ -66,27 +85,7 @@ time_since_last_session <- function(df, time_unit='secs'){
   df <- merge(df, time_since_df[, c('sessionId','time_diff')], by='sessionId', all.x=TRUE)
 }
 
-train_data <- time_since_last_session(train_data, 'secs')
-test_data <- time_since_last_session(test_data, 'secs')
-
-#Parsing and flattening the json fields
-parse_json <- function(df, col_lst){
-  parsed_df <- df
-  for (col in col_lst){
-    flat_fields <- paste("[", paste(df[, col], collapse = ","), "]") %>% fromJSON(flatten = T)
-    parsed_df <- cbind(parsed_df, flat_fields)
-    }
-  return(parsed_df)
-}
-
-json_cols = c('device', 'geoNetwork', 'totals', 'trafficSource')
-
-train_data <- parse_json(train_data, json_cols)
-test_data <- parse_json(test_data, json_cols)
-
-#Drop old json columns
-train_data_subset <- subset(train_data, select = -c(device, geoNetwork, totals, trafficSource))
-test_data_subset <- subset(test_data, select = -c(device, geoNetwork, totals, trafficSource))
+tr_te <- time_since_last_session(tr_te, 'secs')
 
 #Convert values in the data to N/A
 set_na_values <- function(df, na_vals){
@@ -97,23 +96,18 @@ set_na_values <- function(df, na_vals){
 
 na_vals <- c('unknown.unknown','(not set)','not available in demo dataset','(not provided)','(none)','<NA>')
 
-set_na_values(train_data_subset, na_vals)
-set_na_values(test_data_subset, na_vals)
+set_na_values(tr_te, na_vals)
 
 #Ad Content Feature Flags
-train_data_subset$adContent_flag <- ifelse(is.na(train_data_subset$adContent), 0, 1)
-test_data_subset$adContent_flag <- ifelse(is.na(test_data_subset$adContent), 0, 1)
+tr_te$adContent_flag <- ifelse(is.na(tr_te$adContent), 0, 1)
 
-train_data_subset$adwords_flag <- ifelse(is.na(train_data_subset$adwordsClickInfo.page), 0, 1)
-test_data_subset$adwords_flag <- ifelse(is.na(test_data_subset$adwordsClickInfo.page), 0, 1)
+tr_te$adwords_flag <- ifelse(is.na(tr_te$adwordsClickInfo.page), 0, 1)
 
 #Metro Feature Flag
-train_data_subset$metro_flag <- ifelse(is.na(train_data_subset$metro), 0, 1)
-test_data_subset$metro_flag <- ifelse(is.na(test_data_subset$metro), 0, 1)
+tr_te$metro_flag <- ifelse(is.na(tr_te$metro), 0, 1)
 
 #Network Domain Feature Flag
-train_data_subset$networkDomain_flag <- ifelse(is.na(train_data_subset$networkDomain), 0, 1)
-test_data_subset$networkDomain_flag <- ifelse(is.na(test_data_subset$networkDomain), 0, 1)
+tr_te$networkDomain_flag <- ifelse(is.na(tr_te$networkDomain), 0, 1)
 
 # #isVideoAd
 # train_data_subset$adwordsClickInfo.isVideoAd <- ifelse(is.na(train_data_subset$adwordsClickInfo.isVideoAd), 0, 1)
@@ -124,10 +118,7 @@ test_data_subset$networkDomain_flag <- ifelse(is.na(test_data_subset$networkDoma
 
 #columns to fill na w/ 0
 na_cols <- c('bounces','newVisits','isTrueDirect','pageviews')
-
-train_data_subset[na_cols][is.na(train_data_subset[na_cols])] <- 0
-train_data_subset['transactionRevenue'][is.na(train_data_subset['transactionRevenue'])] <- 0
-test_data_subset[na_cols][is.na(test_data_subset[na_cols])] <- 0
+tr_te[na_cols][is.na(tr_te[na_cols])] <- 0
 
 # character columns to convert to numeric
 num_cols <- c('hits', 'pageviews', 'newVisits',
@@ -172,6 +163,14 @@ test_data_subset <- remove_single_val_cols(test_data_subset)
 
 #Take log of the target variable
 train_data_subset$transactionRevenue <- log1p(train_data_subset$transactionRevenue)
+
+fn <- funs(mean, median, var, min, max, sum, n_distinct, .args = list(na.rm = TRUE))
+
+sum_by_vn <- train_data_subset %>%
+  select(visitNumber, hits, pageviews) %>% 
+  group_by(visitNumber) %>% 
+  summarise_all(fn) 
+
 
 #City: New York
 #City: San Fran
