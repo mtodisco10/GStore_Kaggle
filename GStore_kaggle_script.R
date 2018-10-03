@@ -42,6 +42,9 @@ json_cols = c('device', 'geoNetwork', 'totals', 'trafficSource')
 parsed_train <- parse_json(train_data, json_cols)
 parsed_test <- parse_json(test_data, json_cols)
 
+y <- log1p(as.numeric(parsed_train$transactionRevenue))
+y[is.na(y)] <- 0
+
 #Drop old json columns
 parsed_train_subset <- subset(parsed_train, select = -c(device, geoNetwork, totals, trafficSource))
 parsed_test_subset <- subset(parsed_test, select = -c(device, geoNetwork, totals, trafficSource))
@@ -49,6 +52,12 @@ parsed_test_subset <- subset(parsed_test, select = -c(device, geoNetwork, totals
 #Drop campaignCode & transactionRevenue from training data
 parsed_train_subset$campaignCode <- NULL
 parsed_train_subset$transactionRevenue <- NULL
+
+#Storing index and fields to use later
+id <- parsed_test_subset[, "fullVisitorId"]
+tri <- 1:nrow(parsed_train_subset)
+idx <- ymd(parsed_train_subset$date) < ymd("20170601")
+te_bounces <- parsed_test_subset[, "bounces"]
 
 #Reordering test data columns to match the order of the train data columns
 parsed_test_subset <- subset(parsed_test_subset, select = names(parsed_train_subset)) 
@@ -60,9 +69,12 @@ tr_te <- rbind(parsed_train_subset, parsed_test_subset)
 tr_te$date <- as.Date(as.character(tr_te$date), format='%Y%m%d')
 
 #Date Features
-tr_te$month_num <- month(tr_te$date)
-tr_te$week_num <- wday(tr_te$date)
-tr_te$day_num <- as.numeric(days(tr_te$date))
+tr_te$month <- month(tr_te$date)
+tr_te$wday <- wday(tr_te$date)
+tr_te$week <- week(tr_te$date)
+tr_te$day <- day(tr_te$date)
+tr_te$yday <- yday(tr_te$date)
+tr_te$qday <- qday(tr_te$date)
 tr_te$date <- NULL
 
 # convert visitStartTime to POSIXct
@@ -72,7 +84,7 @@ tr_te$visitStartTime <- as_datetime(tr_te$visitStartTime)
 tr_te$hour_num <- hour(tr_te$visitStartTime)
 
 #Combine Hour & Month to get new feature
-tr_te$hour_month <- (tr_te$hour_num * tr_te$month_num) / 10
+tr_te$hour_month <- log1p(tr_te$hour_num * tr_te$month_num)
 
 #Function to create a variable for time since last session
 time_since_last_session <- function(df, time_unit='secs'){
@@ -86,6 +98,7 @@ time_since_last_session <- function(df, time_unit='secs'){
 }
 
 tr_te <- time_since_last_session(tr_te, 'secs')
+tr_te$time_diff <- log1p(tr_te$time_diff)
 
 #Convert values in the data to N/A
 set_na_values <- function(df, na_vals){
@@ -99,58 +112,47 @@ na_vals <- c('unknown.unknown','(not set)','not available in demo dataset','(not
 set_na_values(tr_te, na_vals)
 
 #Ad Content Feature Flags
-tr_te$adContent_flag <- ifelse(is.na(tr_te$adContent), 0, 1)
+tr_te$adContent_flag <- ifelse(is.na(tr_te$adContent), 0L, 1L)
 
-tr_te$adwords_flag <- ifelse(is.na(tr_te$adwordsClickInfo.page), 0, 1)
+tr_te$adwords_flag <- ifelse(is.na(tr_te$adwordsClickInfo.page), 0L, 1L)
 
 #Metro Feature Flag
-tr_te$metro_flag <- ifelse(is.na(tr_te$metro), 0, 1)
+tr_te$metro_flag <- ifelse(is.na(tr_te$metro), 0L, 1L)
 
 #Network Domain Feature Flag
-tr_te$networkDomain_flag <- ifelse(is.na(tr_te$networkDomain), 0, 1)
+tr_te$networkDomain_flag <- ifelse(is.na(tr_te$networkDomain), 0L, 1L)
 
-# #isVideoAd
-# train_data_subset$adwordsClickInfo.isVideoAd <- ifelse(is.na(train_data_subset$adwordsClickInfo.isVideoAd), 0, 1)
-# test_data_subset$adwordsClickInfo.isVideoAd <- ifelse(is.na(test_data_subset$adwordsClickInfo.isVideoAd), 0, 1)
-# 
-# train_data_subset$isVideoAd = as.factor(ifelse(!train_data_subset$adwordsClickInfo.isVideoAd, 1L, 0L))
-# test_data_subset$isVideoAd = as.factor(ifelse(!test_data_subset$adwordsClickInfo.isVideoAd, 1L, 0L))
+#Video Ad
+tr_te$videoAd <- ifelse(!tr_te$adwordsClickInfo.isVideoAd, 1L, 0L)
 
 #columns to fill na w/ 0
-na_cols <- c('bounces','newVisits','isTrueDirect','pageviews')
+na_cols <- c('bounces','newVisits','isTrueDirect','pageviews','videoAd')
 tr_te[na_cols][is.na(tr_te[na_cols])] <- 0
 
 # character columns to convert to numeric
-num_cols <- c('hits', 'pageviews', 'newVisits',
-              'transactionRevenue','visits')
+num_cols <- c('hits', 'pageviews', 'newVisits','visits')
 
 # change columns to numeric
-train_data_subset[, num_cols] <- sapply(train_data_subset[, num_cols], as.numeric)
-test_data_subset[, num_cols[num_cols != 'transactionRevenue']] <- sapply(test_data_subset[, num_cols[num_cols != 'transactionRevenue']], as.numeric)
+tr_te[, num_cols] <- sapply(tr_te[, num_cols], as.numeric)
 
-train_data_subset$isMobile <- as.numeric(train_data_subset$isMobile)
-test_data_subset$isMobile <- as.numeric(test_data_subset$isMobile)
+#Mobile
+tr_te$isMobile <- ifelse(tr_te$isMobile, 1L, 0)
 
 #Ratio columns
 #Hits/pageview
-train_data_subset$hits_per_pageview <- train_data_subset$hits / train_data_subset$pageviews
-test_data_subset$hits_per_pageview <- test_data_subset$hits / test_data_subset$pageviews
+tr_te$hits_per_pageview <- tr_te$hits / tr_te$pageviews
 
 #hits/visits
-train_data_subset$hits_per_visit <- train_data_subset$hits / train_data_subset$visits
-test_data_subset$hits_per_visit <- test_data_subset$hits / test_data_subset$visits
+tr_te$hits_per_visit <- log1p(tr_te$hits / tr_te$visits)
 
 #pageview/visits
-train_data_subset$pageviews_per_visit <- train_data_subset$pageviews / train_data_subset$visits
-test_data_subset$pageviews_per_visit <- test_data_subset$pageviews / test_data_subset$visits
+tr_te$pageviews_per_visit <- log1p(tr_te$pageviews / tr_te$visits)
 
 #newVisits * hits
-train_data_subset$newVisits_times_hits <- train_data_subset$newVisits * train_data_subset$hits
-test_data_subset$newVisits_times_hits <- test_data_subset$newVisits * test_data_subset$hits
+tr_te$newVisits_times_hits <- log1p(tr_te$newVisits * tr_te$hits)
 
 #newVisits * pageviews
-train_data_subset$newVisits_times_pageviews <- train_data_subset$newVisits * train_data_subset$pageviews
-test_data_subset$newVisits_times_pageviews <- test_data_subset$newVisits * test_data_subset$pageviews
+tr_te$newVisits_times_pageviews <- log1p(tr_te$newVisits * tr_te$pageviews)
 
 #Remove columns with only a single value or less
 remove_single_val_cols <- function(df){
@@ -158,18 +160,14 @@ remove_single_val_cols <- function(df){
   df <- subset(df, select = names(unique_col_vals[unique_col_vals > 1]))
 }
 
-train_data_subset <- remove_single_val_cols(train_data_subset)
-test_data_subset <- remove_single_val_cols(test_data_subset)
-
-#Take log of the target variable
-train_data_subset$transactionRevenue <- log1p(train_data_subset$transactionRevenue)
+tr_te_subset <- remove_single_val_cols(tr_te)
 
 fn <- funs(mean, median, var, min, max, sum, n_distinct, .args = list(na.rm = TRUE))
 
-sum_by_vn <- train_data_subset %>%
-  select(visitNumber, hits, pageviews) %>% 
-  group_by(visitNumber) %>% 
-  summarise_all(fn) 
+# sum_by_vn <- train_data_subset %>%
+#   select(visitNumber, hits, pageviews) %>% 
+#   group_by(visitNumber) %>% 
+#   summarise_all(fn) 
 
 
 #City: New York
@@ -183,81 +181,87 @@ sum_by_vn <- train_data_subset %>%
 #goggle vs apple
 
 #channelGrouping
-train_data_subset$channelGrouping_social <- ifelse(train_data_subset$channelGrouping == 'Social', 1, 0)
-test_data_subset$channelGrouping_social <- ifelse(test_data_subset$channelGrouping == 'Social', 1, 0)
+tr_te_subset$channelGrouping_social <- ifelse(tr_te_subset$channelGrouping == 'Social', 1L, 0L)
 
-train_data_subset$channelGrouping_affiliates <- ifelse(train_data_subset$channelGrouping == 'Affiliates', 1, 0)
-test_data_subset$channelGrouping_affiliates <- ifelse(test_data_subset$channelGrouping == 'Affiliates', 1, 0)
+tr_te_subset$channelGrouping_affiliates <- ifelse(tr_te_subset$channelGrouping == 'Affiliates', 1L, 0L)
 
 #Group browsers
-train_data_subset$browser <- ifelse(train_data_subset$browser %in% c('Chrome', 'Safari', 'Firefox', 'Internet, Explorer', 'Edge', 'Android Webview', 'Safari (in-app)', 'Opera Mini', 'Opera', 'UC Browser', 'Coc Coc'), train_data_subset$browser, 'Other')
-test_data_subset$browser <- ifelse(test_data_subset$browser %in% c('Chrome', 'Safari', 'Firefox', 'Internet, Explorer', 'Edge', 'Android Webview', 'Safari (in-app)', 'Opera Mini', 'Opera', 'UC Browser', 'Coc Coc'), test_data_subset$browser, 'Other')
+tr_te_subset$browser <- ifelse(tr_te_subset$browser %in% c('Chrome', 'Safari', 'Firefox', 'Internet, Explorer', 'Edge', 'Android Webview', 'Safari (in-app)', 'Opera Mini', 'Opera', 'UC Browser', 'Coc Coc'), tr_te_subset$browser, 'Other')
 
-train_data_subset$chromeOS <- ifelse(train_data_subset$operatingSystem == 'Firefox', 1, 0)
-test_data_subset$firefox <- ifelse(test_data_subset$browser == 'Firefox', 1, 0)
+tr_te_subset$firefox <- ifelse(tr_te_subset$browser == 'Firefox', 1L, 0L)
 
-train_data_subset$chrome <- ifelse(train_data_subset$browser == 'Chrome', 1, 0)
-test_data_subset$chrome <- ifelse(test_data_subset$browser == 'Chrome', 1, 0)
-
-train_data_subset$mozilla_agent <- ifelse(train_data_subset$browser == 'Mozilla Compatible Agent', 1, 0)
-test_data_subset$mozilla_agent <- ifelse(test_data_subset$browser == 'Mozilla Compatible Agent', 1, 0)
+tr_te_subset$chrome <- ifelse(tr_te_subset$browser == 'Chrome', 1L, 0L)
 
 #Group Operating Systems
-train_data_subset$operatingSystem <- ifelse(train_data_subset$operatingSystem %in% c('Windows', 'Macintosh', 'Android', 'iOS', 'Linux', 'Chrome OS', 'Windows Phone'), train_data_subset$operatingSystem, 'Other')
-test_data_subset$operatingSystem <- ifelse(test_data_subset$operatingSystem %in% c('Windows', 'Macintosh', 'Android', 'iOS', 'Linux', 'Chrome OS', 'Windows Phone'), test_data_subset$operatingSystem, 'Other')
+tr_te_subset$operatingSystem <- ifelse(tr_te_subset$operatingSystem %in% c('Windows', 'Macintosh', 'Android', 'iOS', 'Linux', 'Chrome OS', 'Windows Phone'), tr_te_subset$operatingSystem, 'Other')
 
-train_data_subset$chrome_OS <- ifelse(train_data_subset$operatingSystem == 'Chrome OS', 1, 0)
-test_data_subset$chrome_OS <- ifelse(test_data_subset$operatingSystem == 'Chrome OS', 1, 0)
+tr_te_subset$chrome_OS <- ifelse(tr_te_subset$operatingSystem == 'Chrome OS', 1L, 0L)
 
-train_data_subset$macintosh_OS <- ifelse(train_data_subset$operatingSystem == 'Macintosh', 1, 0)
-test_data_subset$macintosh_OS <- ifelse(test_data_subset$operatingSystem == 'Macintosh', 1, 0)
-
-#Group SubContinents
-train_data_subset$subContinent <- ifelse(train_data_subset$subContinent %in% c('Polynesia', 'Micronesian Region', 'Melanesia', '(not set)'), train_data_subset$subContinent, 'Other')
-test_data_subset$subContinent <- ifelse(test_data_subset$subContinent %in% c('Polynesia', 'Micronesian Region', 'Melanesia', '(not set)'), test_data_subset$subContinent, 'Other')
+tr_te_subset$macintosh_OS <- ifelse(tr_te_subset$operatingSystem == 'Macintosh', 1L, 0L)
 
 #Fill in NA for Medium
-train_data_subset[is.na(train_data_subset$medium), "medium"] <- "Not Found"
-test_data_subset[is.na(test_data_subset$medium), "medium"] <- "Not Found"
+tr_te_subset[is.na(tr_te_subset$medium), "medium"] <- "Not Found"
 
-train_data_subset$medium_affiliate <- ifelse(train_data_subset$medium == 'affiliate', 1, 0)
-test_data_subset$medium_affiliate <- ifelse(test_data_subset$medium == 'affiliate', 1, 0)
+tr_te_subset$medium_affiliate <- ifelse(tr_te_subset$medium == 'affiliate', 1L, 0L)
 
 #Encode categorical variables and drop originals
 cat_encode <- function(df, cat_cols){
   for (col in cat_cols){
-    df[, paste0(col, '_encoded')] <- as.numeric(factor(df[ , col]))
+    df[, paste0(col, '_encoded')] <- as.integer(factor(df[ , col]))
     df[, col] <- NULL
   }
   return(df)
 }
 
-cat_cols <- c('channelGrouping', 'browser', 'operatingSystem', 'subContinent', 'deviceCategory', 'continent', 'source','medium', 'country')
+cat_cols <- c('channelGrouping', 'browser', 'operatingSystem', 'deviceCategory', 'continent','medium', 'country')
 
-train_data_encoded <- cat_encode(train_data_subset, cat_cols)
-test_data_encoded <- cat_encode(test_data_subset, cat_cols)
+tr_te_encoded <- cat_encode(tr_te_subset, cat_cols)
 
 #Fill in NA Values w/ Zero
 
-na_cols <- c('continent_encoded','source_encoded')
+na_cols <- c('continent_encoded')
 
-train_data_encoded[na_cols][is.na(train_data_encoded[na_cols])] <- 0
-test_data_encoded[na_cols][is.na(test_data_encoded[na_cols])] <- 0
+tr_te_encoded[na_cols][is.na(tr_te_encoded[na_cols])] <- 0
 
 #Drop visitStartTime column
-train_data_encoded$visitStartTime <- NULL
-test_data_encoded$visitStartTime <- NULL
+tr_te_encoded$visitStartTime <- NULL
 
 #Remove columns with NA
-dtrain_subset <- Filter(function(x)!any(is.na(x)), train_data_encoded)
-dtest_subset <- Filter(function(x)!any(is.na(x)), test_data_encoded)
+tr_te_final <- Filter(function(x)!any(is.na(x)), tr_te_encoded)
 
 #drop id columns
-dtrain_subset <- subset(dtrain_subset, select = -c(fullVisitorId, sessionId, visitId))
-dtest_subset <- subset(dtest_subset, select = -c(fullVisitorId, sessionId, visitId))
+tr_te_final <- subset(tr_te_final, select = -c(fullVisitorId, sessionId, visitId))
 
 #train test split
 set.seed(123)
+library(catboost)
+dtest = catboost.load_pool(data = subset(tr_te_final, select = -c(bounces))[-tri, ])
+dtrain <- catboost.load_pool(data = subset(tr_te_final, select = -c(bounces))[tri, ][idx, ], label =  y[idx])
+dval <- catboost.load_pool(data = subset(tr_te_final, select = -c(bounces))[tri, ][!idx, ], label = y[!idx])
+
+params <- list(iterations=5000,
+               learning_rate=0.01,
+               depth=10,
+               loss_function='RMSE',
+               eval_metric='RMSE',
+               random_seed = 50,
+               od_type='Iter',
+               metric_period = 50,
+               od_wait=100,
+               use_best_model=TRUE)
+
+model <- catboost.train(dtrain, dval, params)
+
+feature_imp <- catboost.get_feature_importance(model, 
+                                               pool = NULL, 
+                                               fstr_type = "FeatureImportance")
+
+feature_mat <- data.frame(cbind(data.frame(names(subset(tr_te_final, select = -c(bounces)))), data.frame(feature_imp)))
+feature_mat[order(desc(feature_mat$feature_imp)),  ]
+
+
+##############################################
+
 dtrain_subset <- subset(dtrain_subset, select=-c(bounces))
 dtest_subset <- subset(dtest_subset, select=-c(bounces))
 smp_siz = floor(.75*nrow(dtrain_subset))
