@@ -84,7 +84,7 @@ tr_te$visitStartTime <- as_datetime(tr_te$visitStartTime)
 tr_te$hour_num <- hour(tr_te$visitStartTime)
 
 #Combine Hour & Month to get new feature
-tr_te$hour_month <- log1p(tr_te$hour_num * tr_te$month_num)
+tr_te$hour_month <- tr_te$hour_num * tr_te$month_num
 
 #Function to create a variable for time since last session
 time_since_last_session <- function(df, time_unit='secs'){
@@ -98,7 +98,7 @@ time_since_last_session <- function(df, time_unit='secs'){
 }
 
 tr_te <- time_since_last_session(tr_te, 'secs')
-tr_te$time_diff <- log1p(tr_te$time_diff)
+tr_te$time_diff_log <- log1p(tr_te$time_diff)
 
 #Convert values in the data to N/A
 set_na_values <- function(df, na_vals){
@@ -143,16 +143,20 @@ tr_te$isMobile <- ifelse(tr_te$isMobile, 1L, 0)
 tr_te$hits_per_pageview <- tr_te$hits / tr_te$pageviews
 
 #hits/visits
-tr_te$hits_per_visit <- log1p(tr_te$hits / tr_te$visits)
+tr_te$hits_per_visit <- tr_te$hits / tr_te$visits
+tr_te$hits_per_visit_log <- log1p(tr_te$hits / tr_te$visits)
 
 #pageview/visits
-tr_te$pageviews_per_visit <- log1p(tr_te$pageviews / tr_te$visits)
+tr_te$pageviews_per_visit <- tr_te$pageviews / tr_te$visits
+tr_te$pageviews_per_visit_log <- log1p(tr_te$pageviews / tr_te$visits)
 
 #newVisits * hits
-tr_te$newVisits_times_hits <- log1p(tr_te$newVisits * tr_te$hits)
+tr_te$newVisits_times_hits <- tr_te$newVisits * tr_te$hits
+tr_te$newVisits_times_hits_log <- log1p(tr_te$newVisits * tr_te$hits)
 
 #newVisits * pageviews
-tr_te$newVisits_times_pageviews <- log1p(tr_te$newVisits * tr_te$pageviews)
+tr_te$newVisits_times_pageviews <- tr_te$newVisits * tr_te$pageviews
+tr_te$newVisits_times_pageviews_log <- log1p(tr_te$newVisits * tr_te$pageviews)
 
 #Remove columns with only a single value or less
 remove_single_val_cols <- function(df){
@@ -258,7 +262,24 @@ feature_imp <- catboost.get_feature_importance(model,
 
 feature_mat <- data.frame(cbind(data.frame(names(subset(tr_te_final, select = -c(bounces)))), data.frame(feature_imp)))
 feature_mat[order(desc(feature_mat$feature_imp)),  ]
+nrow(dtest)
+preds <- catboost.predict(model, dtest) %>%
+  as_tibble() %>% 
+  set_names("y") %>% 
+  mutate(y = ifelse(y < 0, 0, y)) #%>% 
+  #bind_cols(id) %>% 
+  #bind_cols(te_bounces) %>%
+  #mutate(y = ifelse(is.na(bounces) , y , 0)) %>%  #### when bounce == 1 ,  then we predict revenue = 0
+  #mutate(y = expm1(y)) %>%  #### This is for log(sum) prediction, comment this line, incase of LB high scores
+  #select(-bounces) %>%
+  #group_by(fullVisitorId) %>% 
+  #summarise(y = sum(y))
 
+submit_catboost <- data.frame(fullVisitorId = test_data$fullVisitorId, PredictedLogRevenue = preds)
+
+submit_catboost <- data.frame(submit_catboost %>%
+                                group_by(fullVisitorId) %>%
+                                summarise(PredictedLogRevenue=sum(PredictedLogRevenue)))
 
 ##############################################
 
@@ -325,7 +346,7 @@ dtest_pool = catboost.load_pool(data = X_test_scaled)
 preds <- catboost.predict(model, dtest_pool)
 
 preds <- sapply(preds, function(x){ifelse(x < 1, 0, x)})
-y_test
+
 dtest_subset$bounces <- test_data$bounces
 dtest_subset['bounces'][is.na(dtest_subset['bounces'])] <- 0
 mean((y_test - preds)^2)
